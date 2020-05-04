@@ -1,0 +1,147 @@
+(c) PLX Semiconductors Ltd, 2010
+Update for differential NAND upgrade method.
+
+Full Upgrade
+============
+The create-script.sh without parameters will assume that the files for upgrading are in the 
+"target" directory.
+
+This directory can be used to create a .upg file suitable for upgrading a NAS system. 
+The files to be loaded on the NAS system should be placed in the target directory. 
+The update scripts in the scripts directory will be added to the target directory and the 
+complete set tarred and compressed with a self extracting script used to prefix the 
+file. The file is named upgrd-pkg-example-version.wdg. The name is contained in 'create-script.sh'
+file as a script variable set early in the script.
+
+The active data used by the upgrade process are:
+(essential items)
+packing.lst - contains the firmware revision number.
+
+(essential when upgrade mode required)
+uUpgradeimg - the upgrade kernel placed in a reserved location on NAND which include an initial root filing system as an initramfs 
+	for use by the upgrade kernel.
+
+(optional)
+uImage - the normally executing kernel after upgrading.
+rootfs.arm.ubi - the root filing system compatible with the above kernel(requires upgrade mode).
+
+stage1.wrapped - the image initially loaded from NAND by the bootrom. 
+u-boot.wrapped - the u boot image compatible with the stage 1 image (needs wrapping a 
+	header containing CRC and length).
+
+
+The scripts directory contains the shell scripts used to control the update process. These scripts are copied
+into the working directory and included in the wdg file.
+
+update1.sh - Verifies that the system being upgraded is healthy and the upgrade mode 
+	     executable and initial ram disk are present before installing the optional stage 1 
+	     loader and compatible u-boot image.
+
+reserve.sh - Script to reserve the files in the root file system before updating new root file system. 
+	     The user specific files (ex. configuration file of samba, NAS system configuration ...) 
+	     should be reserved before updating. Those files will be reserved and copied back to new root file system by upgrade2.sh.
+	     The user can keep his own configuration on system after firmware upgrade. 
+
+reserve.list - files to be reseved by reserve.sh script.
+
+The system is re-booted into upgrade mode and the initial ramdisk must contain the 
+an entry in inittab to call an upgrade script to reformat /dev/mtd2 and install
+the image of the root filing system to /dev/mtd2.
+
+The init process in the initramfs will read a simplified inittab during start-up. The task
+/bin/upgrade.sh will be run once. This task, as written, will re-initialise the /dev/mtd2 partition and 
+copy the rootfs.arm.ubi image onto the /dev/mtd2 partition using ubiformat. The uImage kernel 
+is copied to it's reserved area on NAND. The system will then re-boot into the new kernel and file system.
+
+The new root file system shall use the task /etc/init.d/S??upgrade to complete the update process. This process will 
+call upgrade2.sh when present during startup. The upgrade2.sh will delete itself when it completes.
+
+
+The upgrade scripts are:
+scripts:
+	create-script.sh    - creating the upgrade packaged file.
+	upgrade1.sh 	    - verify target ready for upgrade and coordinating upgrade with upgrade mode if required.
+	upgrade2.sh	    - finalise the upgrade - tidy up and record version information.
+	S??upgrade	    - initialisation task to call upgrade2.sh during booting.
+	self-install.sh	    - prefix script to turn a tar file into a self-extracting archive.
+	ram-upgrade_nand.sh - script to include in the initial ram disk used by upgrade mode to reformat
+			      the normal root filing system and update the kernel
+	packing.lst         - Listing of the download contents and most importantly the ROOTFSVERSION identifier
+                              stored as the '/var/lib/current-version'(extacted by upgrade2.sh script).
+	reserve.sh	    - Script to reserve the files in the root file system before updating new root file system.
+	reserve.list	    - files to be reseved by reserve.sh script.
+
+Building upgrade image
+======================
+The src directory include sources to build the upgrade image for NAND firmware upgrade.
+To build the upgrade image, please see the following steps.
+1. change to upgrade folder and untar the source of upgrade root file system. 
+   # cd upgrade/
+   # tar -xf src/upgrade-fs.tar.bz2 --no-same-owner
+2. extracting the busybox source which is used to create the executable needed to upgrade a working system.
+   # tar -xf src/busybox-1.2.2.1.tar.bz2 -C upgrade-fs/ --no-same-owner
+3. changing to upgrade root file source folder and building the executablesi.
+   # cd upgrade-fs
+   # make
+   # cp pre_built_glibc_AP/flash_eraseblk upgradefs/bin/flash_eraseblk
+   # cp pre_built_glibc_AP/nandbd_upgrade upgradefs/bin/nandbd_upgrade
+   
+4. The root file system used for NAND upgrade need to be build-in to upgrade kernel image as an initramfs.
+   Coping 782x_nand_upgrade.config file in src/ to the kernel source folder and building upgrade image.
+   # cp upgrade/src/782x_nand_upgrade.config /PATH of linux kernel source/.config
+   Modifing path of the upgrade root file system in .config file.
+   # cd /PATH of linux kernel source/
+   # vim .config
+
+   Finding the "CONFIG_INITRAMFS_SOURCE=" option in .config file and setting the path of your upgrade root file system.
+   ex. 
+   CONFIG_INITRAMFS_SOURCE="/home/oxsemi/oxnas/820/Taipei/Apps_SDK/NAS_AP_Team_NAND_SDK_20101120/SDK_1.1.0-sources/upgrade/upgrade-fs/upgradefs/"
+
+   Finding the "CONFIG_INITRAMFS_ROOT_UID=" and "CONFIG_INITRAMFS_ROOT_GID=" options in .config and setting this user ID(UID)/ group ID(GID) to
+   the ID of the owner of upgrade root file system.
+   ex. 
+   CONFIG_INITRAMFS_ROOT_UID=500
+   CONFIG_INITRAMFS_ROOT_GID=500
+   where UID 500 and GID 500 are the id of the files in upgradefs/.
+   Setting UID/GID to something other than "0" will cause all files owned by that UID to be owned by user root in the initial ramdisk image.
+
+   The upgrade image can be built by the following steps after changing the options in configuration file above.
+   # make oldconfig
+   # make uImage
+
+   Coping the upgrade image to upgrade/target folder
+   
+   # cat ../upgrade/script/ff_padding > ../upgrade/target/uUpgradeimg
+   # cat arch/arm/boot/uImage >> ../upgrade/target/uUpgradeimg
+   
+5. Creating upgrade package for firmware update.
+   copy stage1.wrapped, u-boot.wrapped, uImage, rootfs.arm.ubi to upgrade/target folder and build upgrade package
+   # cd upgrade
+   # ./scripts/create-script.sh
+
+The upgrade package upgrd-pkg-example-1.0.upg  will be created in upagrade directory.
+Firmware can be updated by uploading this package from you host PC to NAS via update Web page.
+
+**Note. The pre-built ubi and flash utilites used to operate NAND flash while upgrading are in upgrade-fs/pre_built_glibc_AP/.
+        Those executables are built using libc 2.7. If c library in toolchain is different from this, please re-build mtd-uitls and nandbd_upgrade.
+
+    	To build the mtd-utils, please patch the source with the mtd-utils-plx-nand-upgrade.patch file in upgrade/src before building.
+	The nand_upgrade source is provided in upgrade/src/nandbd_upgrade.tar.bz2.
+
+	The executables needed for firmware upgrade are listed below.
+	in mtd-utils:
+		flash_eraseblk
+		ubiattach
+		ubidetach
+		ubiformat
+	Please copy those file to upgrade-fs/pre_built_glibc_AP/
+
+	in nandbd_upgrade:
+		nandbd_upgrade
+	Please copy nandbd_upgrade to upgrade-fs/pre_built_glibc_AP/
+	
+	the related c libaries used for those executables also need to be copied to upgrade-fs/pre_built_glibc_AP/lib
+	
+ 
+
+

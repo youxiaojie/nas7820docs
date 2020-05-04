@@ -1,0 +1,29 @@
+1. 512KB SPI layout 
+Program			Start address		End address		Space allocated
+stage1.wrapped		0			0x3FFF			16kB
+stage1.wrapped		0x4000			0x7FFF			16kB
+u-boot.wrapped		0x8000			0x39FFF			200kB
+u-boot.wrapped		0x3A000			0x6BFFF			200Kb
+u-boot env		Flash size-0x8000	End of Flash		32kB
+
+2. Building stage1 with SPI support.
+make SDK_BUILD_SPI_BOOT=y 
+
+3. Building u-boot with SPI support.
+
+in u-boot/common/env_sspi.c function saveenv, change the erase size for the specific flash.
+
+make SDK_BUILD_NAND_BOOT=y MEM_SIZE=512 USE_SPI=1 USE_SPI_ENV=1 USE_NAND_ENV=0 CROSS_COMPILE=arm-linux-
+
+4. Write images to SPI by u-boot sf command. (u-boot.wrapped.sata_spi)
+ex. erase a 512KB spi flash and write stage1, u-boot, uImage and ramdisk to flash.
+sf erase 0 80000
+tftp 60500000 stage1.wrapped.spi.samsung
+sf write 60500000 0 0x1860
+sf write 60500000 4000 0x1860
+tftp 60500000 u-boot.wrapped.nand_spi_512
+sf write 60500000 8000 0x1d248
+sf write 60500000 48000 0x1d248
+
+5. Reboot the system from SPI.
+
